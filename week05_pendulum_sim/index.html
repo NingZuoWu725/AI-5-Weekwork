@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>单摆模拟器 · Simple Pendulum Simulator</title>
+<style>
+  :root {
+    --bg: #1a1a24;               /* 深灰科技色背景 */
+    --ink: #e9edf7;
+    --muted: #7d879e;
+    --accent: #58e1ff;
+    --panel: rgba(17, 19, 29, 0.72);
+    --stroke: rgba(120, 150, 200, 0.16);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+  #stage { display: block; width: 100%; height: 100%; }
+
+  /* ---------- HUD 数据面板 ---------- */
+  .hud {
+    position: fixed;
+    top: 20px;
+    left: 20px;
+    min-width: 236px;
+    padding: 16px 18px 14px;
+    border-radius: 14px;
+    background: var(--panel);
+    border: 1px solid var(--stroke);
+    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
+    box-shadow: 0 12px 34px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    user-select: none;
+    pointer-events: none;
+  }
+  .hud__title {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 15px; font-weight: 650; letter-spacing: 0.4px;
+  }
+  .hud__dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 10px 2px rgba(88, 225, 255, 0.7);
+  }
+  .hud__sub {
+    margin: 3px 0 12px;
+    font-size: 10.5px; letter-spacing: 1.5px; text-transform: uppercase;
+    color: var(--muted);
+  }
+  .hud__rows { display: grid; gap: 6px; }
+  .row { display: flex; justify-content: space-between; align-items: baseline; font-size: 12.5px; }
+  .row span { color: var(--muted); }
+  .row b {
+    font-family: "SFMono-Regular", Consolas, "Cascadia Mono", ui-monospace, monospace;
+    font-weight: 600; color: var(--ink);
+    font-variant-numeric: tabular-nums;
+  }
+  .row b.hi { color: var(--accent); }
+  .hud__sep { height: 1px; background: var(--stroke); margin: 10px 0; }
+  .hud__hint { font-size: 11px; color: var(--muted); line-height: 1.7; }
+  .hud__model {
+    margin-top: 6px; font-size: 10.5px; color: var(--muted);
+    font-family: Consolas, ui-monospace, monospace;
+  }
+  kbd {
+    font-family: inherit; font-size: 10.5px;
+    padding: 1px 5px; border-radius: 4px;
+    background: rgba(255, 255, 255, 0.07);
+    border: 1px solid var(--stroke); color: var(--ink);
+  }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+
+<aside class="hud">
+  <div class="hud__title"><i class="hud__dot"></i>单摆模拟器</div>
+  <div class="hud__sub">Simple Pendulum · Canvas Physics</div>
+  <div class="hud__rows">
+    <div class="row"><span>摆长 L</span><b>200 px</b></div>
+    <div class="row"><span>重力 g</span><b>9.8 m/s²</b></div>
+    <div class="row"><span>初始摆角 θ₀</span><b>45°</b></div>
+    <div class="row"><span>理论周期 T₀</span><b id="m-period">—</b></div>
+    <div class="row"><span>实际周期 T(θ₀)</span><b id="m-period-real">—</b></div>
+    <div class="hud__sep"></div>
+    <div class="row"><span>当前角度 θ</span><b id="m-angle" class="hi">—</b></div>
+    <div class="row"><span>角速度 ω</span><b id="m-omega">—</b></div>
+    <div class="row"><span>机械能 E</span><b id="m-energy">—</b></div>
+  </div>
+  <div class="hud__sep"></div>
+  <div class="hud__hint"><kbd>空格</kbd> 暂停 / 继续　<kbd>R</kbd> 重置</div>
+  <div class="hud__model">模型 θ″ = −(g/L)·sin θ</div>
+</aside>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ============================================================
+   * 1. 物理参数（严格对应技术约束）
+   * ============================================================ */
+  const CONFIG = {
+    lengthPx:        200,   // 摆长 L = 200 px
+    gravity:         9.8,   // 重力加速度 g = 9.8 m/s²
+    initialAngleDeg: 45,    // 初始摆角 θ₀ = 45°
+    pixelsPerMeter:  100,   // 像素↔米 换算（保证周期处于可观赏区间）
+    bobRadius:       13,    // 摆球半径(px)
+    mass:            1.0    // 摆球质量(kg)，仅用于能量读数
+  };
+
+  const L_PX  = CONFIG.lengthPx;                    // 摆长(px)
+  const G     = CONFIG.gravity;                     // 重力加速度
+  const L_M   = L_PX / CONFIG.pixelsPerMeter;       // 摆长(m) = 2.0
+  const OMEGA0 = Math.sqrt(G / L_M);                // 小角近似角频率 √(g/L)
+
+  /* ============================================================
+   * 2. 状态
+   * ============================================================ */
+  const THETA0 = CONFIG.initialAngleDeg * Math.PI / 180;
+  const state = {
+    theta: THETA0,   // 当前摆角(rad)，自竖直向下起算
+    omega: 0,        // 当前角速度(rad/s)
+    paused: false
+  };
+
+  /* ============================================================
+   * 3. 画布与响应式布局
+   * ============================================================ */
+  const canvas = document.getElementById('stage');
+  const ctx = canvas.getContext('2d');
+  let W = 0, H = 0, dpr = 1;
+  const pivot = { x: 0, y: 0 };
+
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = canvas.clientWidth;
+    H = canvas.clientHeight;
+    canvas.width  = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    pivot.x = W / 2;
+    // 保证摆球竖直下垂时不越出下边界，同时给顶部吊挂留出空间
+    const maxY = Math.max(90, H - L_PX - 60);
+    pivot.y = Math.max(90, Math.min(H * 0.30, maxY));
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  /* ============================================================
+   * 4. 物理积分（速度 Verlet，能量近似守恒）
+   *    角加速度 α = −(g/L)·sin θ
+   * ============================================================ */
+  const FIXED_DT = 1 / 240;   // 固定物理步长，保证不同刷新率下一致
+  let accumulator = 0;
+
+  function angAccel(theta) {
+    return -(G / L_M) * Math.sin(theta);
+  }
+
+  function integrate(dt) {
+    const a0 = angAccel(state.theta);
+    const thetaNext = state.theta + state.omega * dt + 0.5 * a0 * dt * dt;
+    const a1 = angAccel(thetaNext);
+    state.omega += 0.5 * (a0 + a1) * dt;
+    state.theta = thetaNext;
+  }
+
+  /* ============================================================
+   * 5. 运动轨迹（发光拖尾）
+   * ============================================================ */
+  const TRAIL_LIFE_MS = 900;
+  const trail = [];
+
+  /* ============================================================
+   * 6. 绘制
+   * ============================================================ */
+  function bobPosition(theta) {
+    return {
+      x: pivot.x + L_PX * Math.sin(theta),
+      y: pivot.y + L_PX * Math.cos(theta)
+    };
+  }
+
+  function drawBackground() {
+    ctx.fillStyle = '#1a1a24';
+    ctx.fillRect(0, 0, W, H);
+
+    // 中心科技柔光
+    const glow = ctx.createRadialGradient(
+      pivot.x, pivot.y + L_PX * 0.65, 10,
+      pivot.x, pivot.y + L_PX * 0.65, Math.max(W, H) * 0.72
+    );
+    glow.addColorStop(0,   'rgba(64, 138, 200, 0.13)');
+    glow.addColorStop(0.45,'rgba(40, 72, 120, 0.05)');
+    glow.addColorStop(1,   'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, W, H);
+
+    // 细网格
+    const step = 48;
+    ctx.strokeStyle = 'rgba(120, 160, 220, 0.055)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let x = (W / 2) % step; x < W; x += step) {
+      ctx.moveTo(Math.round(x) + 0.5, 0);
+      ctx.lineTo(Math.round(x) + 0.5, H);
+    }
+    for (let y = (H / 2) % step; y < H; y += step) {
+      ctx.moveTo(0, Math.round(y) + 0.5);
+      ctx.lineTo(W, Math.round(y) + 0.5);
+    }
+    ctx.stroke();
+  }
+
+  // 摆动包络弧（±θ₀ 虚线）
+  function drawEnvelope() {
+    const amp = Math.abs(THETA0);
+    ctx.save();
+    ctx.setLineDash([4, 7]);
+    ctx.strokeStyle = 'rgba(88, 225, 255, 0.17)';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.arc(pivot.x, pivot.y, L_PX, Math.PI / 2 - amp, Math.PI / 2 + amp);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // 竖直参考线 + 角度弧
+  function drawAngleRef() {
+    ctx.save();
+    ctx.setLineDash([3, 6]);
+    ctx.strokeStyle = 'rgba(140, 175, 225, 0.26)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(pivot.x, pivot.y);
+    ctx.lineTo(pivot.x, pivot.y + L_PX);
+    ctx.stroke();
+    ctx.restore();
+
+    // 角度扇形
+    const r = 48;
+    const a = Math.PI / 2 - state.theta;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(88, 225, 255, 0.5)';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.arc(pivot.x, pivot.y, r, Math.min(a, Math.PI / 2), Math.max(a, Math.PI / 2));
+    ctx.stroke();
+
+    // 角度数值
+    const mid = Math.PI / 2 - state.theta / 2;
+    const lx = pivot.x + (r + 16) * Math.cos(mid);
+    const ly = pivot.y + (r + 16) * Math.sin(mid);
+    ctx.font = '11px Consolas, ui-monospace, monospace';
+    ctx.fillStyle = 'rgba(88, 225, 255, 0.85)';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText((state.theta * 180 / Math.PI).toFixed(1) + '°', lx, ly);
+    ctx.restore();
+  }
+
+  // 顶部吊挂
+  function drawMount() {
+    ctx.save();
+    ctx.strokeStyle = 'rgba(150, 185, 235, 0.30)';
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(pivot.x - 66, pivot.y - 24);
+    ctx.lineTo(pivot.x + 66, pivot.y - 24);
+    ctx.stroke();
+
+    ctx.fillStyle = 'rgba(150, 185, 235, 0.55)';
+    ctx.beginPath();
+    ctx.arc(pivot.x, pivot.y, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawRod(bx, by) {
+    const grad = ctx.createLinearGradient(pivot.x, pivot.y, bx, by);
+    grad.addColorStop(0, 'rgba(140, 175, 225, 0.32)');
+    grad.addColorStop(1, 'rgba(205, 232, 255, 0.78)');
+    ctx.save();
+    ctx.strokeStyle = grad;
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(pivot.x, pivot.y);
+    ctx.lineTo(bx, by);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawTrail(now) {
+    if (trail.length < 2) return;
+    ctx.save();
+    ctx.lineCap = 'round';
+    for (let i = 1; i < trail.length; i++) {
+      const p0 = trail[i - 1], p1 = trail[i];
+      const a = Math.max(0, 1 - (now - p1.t) / TRAIL_LIFE_MS);
+      if (a <= 0) continue;
+      ctx.strokeStyle = 'rgba(88, 225, 255, ' + (a * 0.30).toFixed(3) + ')';
+      ctx.lineWidth = a * 3 + 0.4;
+      ctx.beginPath();
+      ctx.moveTo(p0.x, p0.y);
+      ctx.lineTo(p1.x, p1.y);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // 摆球（微弱发光）
+  function drawBob(bx, by) {
+    const R = CONFIG.bobRadius;
+    ctx.save();
+
+    // 柔和外晕
+    const halo = ctx.createRadialGradient(bx, by, R * 0.5, bx, by, R * 3.6);
+    halo.addColorStop(0, 'rgba(88, 225, 255, 0.22)');
+    halo.addColorStop(1, 'rgba(88, 225, 255, 0)');
+    ctx.fillStyle = halo;
+    ctx.beginPath();
+    ctx.arc(bx, by, R * 3.6, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 球体（自带光晕）
+    ctx.shadowBlur = 24;
+    ctx.shadowColor = 'rgba(88, 225, 255, 0.9)';
+    const body = ctx.createRadialGradient(
+      bx - R * 0.35, by - R * 0.45, R * 0.15,
+      bx, by, R
+    );
+    body.addColorStop(0,    '#ffffff');
+    body.addColorStop(0.42, '#9defff');
+    body.addColorStop(1,    '#33b4e6');
+    ctx.fillStyle = body;
+    ctx.beginPath();
+    ctx.arc(bx, by, R, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 高光点
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+    ctx.beginPath();
+    ctx.arc(bx - R * 0.34, by - R * 0.42, R * 0.24, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function render(now) {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    drawBackground();
+
+    const p = bobPosition(state.theta);
+    drawEnvelope();
+    drawAngleRef();
+    drawMount();
+    drawTrail(now);
+    drawRod(p.x, p.y);
+    drawBob(p.x, p.y);
+  }
+
+  /* ============================================================
+   * 7. 读数面板
+   * ============================================================ */
+  const el = {
+    period:     document.getElementById('m-period'),
+    periodReal: document.getElementById('m-period-real'),
+    angle:      document.getElementById('m-angle'),
+    omega:      document.getElementById('m-omega'),
+    energy:     document.getElementById('m-energy')
+  };
+
+  // 大角度周期修正：T = T₀·(1 + ¼s² + 9/64·s⁴ + …)，s = sin(θ₀/2)
+  function periodExact(theta0) {
+    const s = Math.sin(theta0 / 2);
+    const T0 = 2 * Math.PI / OMEGA0;
+    return T0 * (1 + 0.25 * s * s + (9 / 64) * Math.pow(s, 4));
+  }
+
+  function totalEnergy() {
+    const m = CONFIG.mass;
+    const v = L_M * state.omega;                                  // 线速度
+    const kinetic = 0.5 * m * v * v;
+    const potential = m * G * L_M * (1 - Math.cos(state.theta));   // 以最低点为势能零点
+    return kinetic + potential;
+  }
+
+  function updateReadouts() {
+    el.angle.textContent    = (state.theta * 180 / Math.PI).toFixed(1) + '°';
+    el.omega.textContent    = state.omega.toFixed(2) + ' rad/s';
+    el.energy.textContent   = totalEnergy().toFixed(2) + ' J';
+  }
+
+  el.period.textContent     = (2 * Math.PI / OMEGA0).toFixed(2) + ' s';
+  el.periodReal.textContent = periodExact(THETA0).toFixed(2) + ' s';
+
+  /* ============================================================
+   * 8. 交互
+   * ============================================================ */
+  function reset() {
+    state.theta = THETA0;
+    state.omega = 0;
+    trail.length = 0;
+    accumulator = 0;
+  }
+
+  window.addEventListener('keydown', function (e) {
+    if (e.code === 'Space') {
+      e.preventDefault();
+      state.paused = !state.paused;
+    } else if (e.key === 'r' || e.key === 'R') {
+      reset();
+      state.paused = false;
+    }
+  });
+
+  /* ============================================================
+   * 9. 主循环（requestAnimationFrame 驱动）
+   * ============================================================ */
+  let lastTs = performance.now();
+
+  function frame(now) {
+    let dt = (now - lastTs) / 1000;
+    lastTs = now;
+    if (dt > 0.05) dt = 0.05;      // 切换标签页/卡顿后防止物理跳跃
+
+    if (!state.paused) {
+      accumulator += dt;
+      let guard = 0;
+      while (accumulator >= FIXED_DT && guard++ < 600) {
+        integrate(FIXED_DT);
+        accumulator -= FIXED_DT;
+      }
+
+      // 记录拖尾
+      const p = bobPosition(state.theta);
+      trail.push({ x: p.x, y: p.y, t: now });
+      while (trail.length && now - trail[0].t > TRAIL_LIFE_MS) trail.shift();
+    }
+
+    updateReadouts();
+    render(now);
+    requestAnimationFrame(frame);
+  }
+
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
