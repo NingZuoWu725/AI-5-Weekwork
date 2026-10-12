@@ -16,13 +16,79 @@
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { width: 100%; height: 100%; }
   body {
+    display: flex;
+    flex-direction: column;
     background: var(--bg);
     color: var(--ink);
     font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
     overflow: hidden;
     -webkit-font-smoothing: antialiased;
   }
+
+  /* ---------- 画布区 ---------- */
+  #stage-wrap { position: relative; flex: 1 1 auto; min-height: 0; }
   #stage { display: block; width: 100%; height: 100%; }
+
+  /* ---------- 底部控制台 ---------- */
+  .console {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: flex-end;
+    gap: 26px;
+    padding: 14px 26px 18px;
+    background: linear-gradient(180deg, rgba(17, 19, 29, 0.55), rgba(17, 19, 29, 0.94));
+    border-top: 1px solid var(--stroke);
+    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
+    box-shadow: 0 -14px 34px rgba(0, 0, 0, 0.42);
+  }
+  .ctl { display: flex; flex-direction: column; gap: 10px; flex: 1 1 0; min-width: 140px; }
+  .ctl__head { display: flex; justify-content: space-between; align-items: baseline; font-size: 12.5px; }
+  .ctl__head span { color: var(--muted); letter-spacing: 0.3px; }
+  .ctl__head b {
+    font-family: "SFMono-Regular", Consolas, "Cascadia Mono", ui-monospace, monospace;
+    font-weight: 600; color: var(--accent); font-variant-numeric: tabular-nums;
+  }
+  .ctl input[type="range"] {
+    -webkit-appearance: none; appearance: none;
+    width: 100%; height: 16px; background: transparent; outline: none; cursor: pointer;
+  }
+  .ctl input[type="range"]::-webkit-slider-runnable-track {
+    height: 4px; border-radius: 3px; background: rgba(120, 150, 200, 0.22);
+  }
+  .ctl input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 15px; height: 15px; margin-top: -5.5px; border-radius: 50%;
+    background: radial-gradient(circle at 35% 35%, #ffffff, #58e1ff 55%, #2ba7d4);
+    border: 1px solid rgba(255, 255, 255, 0.55);
+    box-shadow: 0 0 10px 2px rgba(88, 225, 255, 0.6);
+  }
+  .ctl input[type="range"]::-moz-range-track {
+    height: 4px; border-radius: 3px; background: rgba(120, 150, 200, 0.22);
+  }
+  .ctl input[type="range"]::-moz-range-thumb {
+    width: 15px; height: 15px; border-radius: 50%;
+    background: radial-gradient(circle at 35% 35%, #ffffff, #58e1ff 55%, #2ba7d4);
+    border: 1px solid rgba(255, 255, 255, 0.55);
+    box-shadow: 0 0 10px 2px rgba(88, 225, 255, 0.6);
+  }
+  .btn {
+    flex: 0 0 auto;
+    padding: 10px 22px;
+    border-radius: 10px;
+    font-family: inherit; font-size: 13px; font-weight: 600; letter-spacing: 0.4px;
+    color: var(--ink);
+    background: rgba(88, 225, 255, 0.10);
+    border: 1px solid rgba(88, 225, 255, 0.42);
+    cursor: pointer; user-select: none;
+    transition: background 0.18s, box-shadow 0.18s, transform 0.08s;
+  }
+  .btn:hover { background: rgba(88, 225, 255, 0.20); box-shadow: 0 0 16px rgba(88, 225, 255, 0.28); }
+  .btn:active { transform: translateY(1px); }
+  @media (max-width: 760px) {
+    .console { flex-wrap: wrap; gap: 14px 18px; padding: 12px 16px 14px; }
+    .ctl { min-width: 120px; }
+  }
 
   /* ---------- HUD 数据面板 ---------- */
   .hud {
@@ -78,14 +144,14 @@
 </style>
 </head>
 <body>
-<canvas id="stage"></canvas>
+<main id="stage-wrap"><canvas id="stage"></canvas></main>
 
 <aside class="hud">
   <div class="hud__title"><i class="hud__dot"></i>单摆模拟器</div>
   <div class="hud__sub">Simple Pendulum · Canvas Physics</div>
   <div class="hud__rows">
-    <div class="row"><span>摆长 L</span><b>200 px</b></div>
-    <div class="row"><span>重力 g</span><b>9.8 m/s²</b></div>
+    <div class="row"><span>摆长 L</span><b id="m-length">200 px</b></div>
+    <div class="row"><span>重力 g</span><b id="m-gravity">9.8 m/s²</b></div>
     <div class="row"><span>初始摆角 θ₀</span><b>45°</b></div>
     <div class="row"><span>理论周期 T₀</span><b id="m-period">—</b></div>
     <div class="row"><span>实际周期 T(θ₀)</span><b id="m-period-real">—</b></div>
@@ -96,29 +162,57 @@
   </div>
   <div class="hud__sep"></div>
   <div class="hud__hint"><kbd>空格</kbd> 暂停 / 继续　<kbd>R</kbd> 重置</div>
-  <div class="hud__model">模型 θ″ = −(g/L)·sin θ</div>
+  <div class="hud__model">θ″ = −(g/L)sin θ − 2ζω₀θ′</div>
 </aside>
+
+<footer class="console">
+  <div class="ctl">
+    <div class="ctl__head"><span>摆长 L</span><b id="v-length">200 px</b></div>
+    <input type="range" id="s-length" min="100" max="350" step="1" value="200" aria-label="摆长 L" />
+  </div>
+  <div class="ctl">
+    <div class="ctl__head"><span>重力 g</span><b id="v-gravity">9.8 m/s²</b></div>
+    <input type="range" id="s-gravity" min="1" max="25" step="0.1" value="9.8" aria-label="重力加速度 g" />
+  </div>
+  <div class="ctl">
+    <div class="ctl__head"><span>阻尼 ζ</span><b id="v-damping">0.0000</b></div>
+    <input type="range" id="s-damping" min="0" max="0.01" step="0.0001" value="0" aria-label="阻尼比 ζ" />
+  </div>
+  <button id="btn-reset" class="btn" type="button">重置摆动</button>
+</footer>
 
 <script>
 (function () {
   'use strict';
 
   /* ============================================================
-   * 1. 物理参数（严格对应技术约束）
+   * 1. 物理参数（实时可调，由底部控制台驱动）
    * ============================================================ */
   const CONFIG = {
-    lengthPx:        200,   // 摆长 L = 200 px
-    gravity:         9.8,   // 重力加速度 g = 9.8 m/s²
     initialAngleDeg: 45,    // 初始摆角 θ₀ = 45°
     pixelsPerMeter:  100,   // 像素↔米 换算（保证周期处于可观赏区间）
     bobRadius:       13,    // 摆球半径(px)
     mass:            1.0    // 摆球质量(kg)，仅用于能量读数
   };
 
-  const L_PX  = CONFIG.lengthPx;                    // 摆长(px)
-  const G     = CONFIG.gravity;                     // 重力加速度
-  const L_M   = L_PX / CONFIG.pixelsPerMeter;       // 摆长(m) = 2.0
-  const OMEGA0 = Math.sqrt(G / L_M);                // 小角近似角频率 √(g/L)
+  // 实时参数：与底部三个滑块一一对应
+  const params = {
+    lengthPx: 200,   // 摆长 L：100 ~ 350 px
+    gravity:  9.8,   // 重力 g：1 ~ 25 m/s²
+    zeta:     0      // 阻尼比 ζ：0 ~ 0.010
+  };
+
+  // 由实时参数派生的量（滑块变化时重算）
+  let L_PX   = params.lengthPx;                     // 摆长(px)
+  let L_M    = L_PX / CONFIG.pixelsPerMeter;        // 摆长(m)
+  let OMEGA0 = Math.sqrt(params.gravity / L_M);     // 小角近似角频率 √(g/L)
+
+  function recomputeDerived() {
+    L_PX   = params.lengthPx;
+    L_M    = L_PX / CONFIG.pixelsPerMeter;
+    OMEGA0 = Math.sqrt(params.gravity / L_M);
+  }
+  recomputeDerived();
 
   /* ============================================================
    * 2. 状态
@@ -138,6 +232,13 @@
   let W = 0, H = 0, dpr = 1;
   const pivot = { x: 0, y: 0 };
 
+  // 悬挂点定位：保证摆长变化后摆球不越出下边界，并给顶部吊挂留出空间
+  function layoutPivot() {
+    pivot.x = W / 2;
+    const maxY = Math.max(90, H - L_PX - 60);
+    pivot.y = Math.max(90, Math.min(H * 0.30, maxY));
+  }
+
   function resize() {
     dpr = Math.min(window.devicePixelRatio || 1, 2);
     W = canvas.clientWidth;
@@ -145,30 +246,26 @@
     canvas.width  = Math.round(W * dpr);
     canvas.height = Math.round(H * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-    pivot.x = W / 2;
-    // 保证摆球竖直下垂时不越出下边界，同时给顶部吊挂留出空间
-    const maxY = Math.max(90, H - L_PX - 60);
-    pivot.y = Math.max(90, Math.min(H * 0.30, maxY));
+    layoutPivot();
   }
   window.addEventListener('resize', resize);
   resize();
 
   /* ============================================================
    * 4. 物理积分（速度 Verlet，能量近似守恒）
-   *    角加速度 α = −(g/L)·sin θ
+   *    角加速度 α = −(g/L)·sin θ − 2ζω₀·θ′
    * ============================================================ */
   const FIXED_DT = 1 / 240;   // 固定物理步长，保证不同刷新率下一致
   let accumulator = 0;
 
-  function angAccel(theta) {
-    return -(G / L_M) * Math.sin(theta);
+  function angAccel(theta, omega) {
+    return -(params.gravity / L_M) * Math.sin(theta) - 2 * params.zeta * OMEGA0 * omega;
   }
 
   function integrate(dt) {
-    const a0 = angAccel(state.theta);
+    const a0 = angAccel(state.theta, state.omega);
     const thetaNext = state.theta + state.omega * dt + 0.5 * a0 * dt * dt;
-    const a1 = angAccel(thetaNext);
+    const a1 = angAccel(thetaNext, state.omega + a0 * dt);
     state.omega += 0.5 * (a0 + a1) * dt;
     state.theta = thetaNext;
   }
@@ -373,6 +470,8 @@
    * 7. 读数面板
    * ============================================================ */
   const el = {
+    length:     document.getElementById('m-length'),
+    gravity:    document.getElementById('m-gravity'),
     period:     document.getElementById('m-period'),
     periodReal: document.getElementById('m-period-real'),
     angle:      document.getElementById('m-angle'),
@@ -389,26 +488,27 @@
 
   function totalEnergy() {
     const m = CONFIG.mass;
-    const v = L_M * state.omega;                                  // 线速度
+    const v = L_M * state.omega;                                              // 线速度
     const kinetic = 0.5 * m * v * v;
-    const potential = m * G * L_M * (1 - Math.cos(state.theta));   // 以最低点为势能零点
+    const potential = m * params.gravity * L_M * (1 - Math.cos(state.theta));  // 以最低点为势能零点
     return kinetic + potential;
   }
 
   function updateReadouts() {
-    el.angle.textContent    = (state.theta * 180 / Math.PI).toFixed(1) + '°';
-    el.omega.textContent    = state.omega.toFixed(2) + ' rad/s';
-    el.energy.textContent   = totalEnergy().toFixed(2) + ' J';
+    el.length.textContent     = params.lengthPx + ' px';
+    el.gravity.textContent    = params.gravity.toFixed(1) + ' m/s²';
+    el.period.textContent     = (2 * Math.PI / OMEGA0).toFixed(2) + ' s';
+    el.periodReal.textContent = periodExact(THETA0).toFixed(2) + ' s';
+    el.angle.textContent      = (state.theta * 180 / Math.PI).toFixed(1) + '°';
+    el.omega.textContent      = state.omega.toFixed(2) + ' rad/s';
+    el.energy.textContent     = totalEnergy().toFixed(2) + ' J';
   }
 
-  el.period.textContent     = (2 * Math.PI / OMEGA0).toFixed(2) + ' s';
-  el.periodReal.textContent = periodExact(THETA0).toFixed(2) + ' s';
-
   /* ============================================================
-   * 8. 交互
+   * 8. 交互：键盘快捷键 + 底部控制台
    * ============================================================ */
   function reset() {
-    state.theta = THETA0;
+    state.theta = THETA0;   // 精准回到 45° 初始摆角
     state.omega = 0;
     trail.length = 0;
     accumulator = 0;
@@ -423,6 +523,47 @@
       state.paused = false;
     }
   });
+
+  const sLength  = document.getElementById('s-length');
+  const sGravity = document.getElementById('s-gravity');
+  const sDamping = document.getElementById('s-damping');
+  const vLength  = document.getElementById('v-length');
+  const vGravity = document.getElementById('v-gravity');
+  const vDamping = document.getElementById('v-damping');
+  const btnReset = document.getElementById('btn-reset');
+
+  function applyLength() {
+    params.lengthPx = parseFloat(sLength.value);
+    recomputeDerived();
+    layoutPivot();                              // 摆长变化后重定位悬挂点，避免摆球越界
+    vLength.textContent = params.lengthPx + ' px';
+  }
+
+  function applyGravity() {
+    params.gravity = parseFloat(sGravity.value);
+    recomputeDerived();
+    vGravity.textContent = params.gravity.toFixed(1) + ' m/s²';
+  }
+
+  function applyDamping() {
+    params.zeta = parseFloat(sDamping.value);
+    vDamping.textContent = params.zeta.toFixed(4);
+  }
+
+  sLength.addEventListener('input', applyLength);
+  sGravity.addEventListener('input', applyGravity);
+  sDamping.addEventListener('input', applyDamping);
+
+  btnReset.addEventListener('click', function () {
+    reset();
+    state.paused = false;
+    btnReset.blur();                            // 防止之后按空格误触发按钮
+  });
+
+  // 以控件初值刷新一次派生量与数值标签
+  applyLength();
+  applyGravity();
+  applyDamping();
 
   /* ============================================================
    * 9. 主循环（requestAnimationFrame 驱动）
